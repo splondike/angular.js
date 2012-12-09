@@ -27,7 +27,7 @@ describe('$http', function() {
 
   describe('$httpProvider', function() {
 
-    describe('interceptors', function() {
+    describe('response interceptors', function() {
 
       it('should default to an empty array', module(function($httpProvider) {
         expect($httpProvider.responseInterceptors).toEqual([]);
@@ -97,6 +97,88 @@ describe('$http', function() {
 
           $httpBackend.flush();
           expect(response).toBe('HELLO!');
+        });
+      });
+    });
+
+    describe('request interceptors', function() {
+      it('should default to an empty array', module(function($httpProvider) {
+        expect($httpProvider.requestInterceptors).toEqual([]);
+      }));
+
+      it('should support interceptors defined as services', function() {
+        var callOrdering = [];
+        module(function($provide, $httpProvider) {
+          $provide.factory('reqInterceptor', function() {
+            return function(promise) {
+              callOrdering.push("interceptor");
+              return promise.then(function(config) {
+                callOrdering.push("promise");
+                return config;
+              });
+            };
+          });
+
+          $httpProvider.requestInterceptors.push('reqInterceptor');
+        });
+
+        inject(function($http, $httpBackend) {
+          $httpBackend.expect('GET', '/test').respond(function() {
+            callOrdering.push("request");
+            return [200, "hello", {}];
+          });
+          $http.get('/test');
+          $httpBackend.flush();
+          // Check that we're executing code in the right order
+          expect(callOrdering).toEqual(["interceptor", "promise", "request"]);
+        });
+      }); 
+
+      it('should support interceptors defined inline', function() {
+        var callOrdering = [];
+        module(function($provide, $httpProvider) {
+          $httpProvider.requestInterceptors.push(function() {
+            return function(promise) {
+              callOrdering.push("interceptor");
+              return promise.then(function(config) {
+                callOrdering.push("promise");
+                return config;
+              });
+            };
+          });
+        });
+
+        inject(function($http, $httpBackend) {
+          $httpBackend.expect('GET', '/test').respond(function() {
+            callOrdering.push("request");
+            return [200, "hello", {}];
+          });
+          $http.get('/test');
+          $httpBackend.flush();
+          // Check that we're executing code in the right order
+          expect(callOrdering).toEqual(["interceptor", "promise", "request"]);
+        });
+      }); 
+
+      it('should allow mutation of the request', function() {
+        module(function($provide, $httpProvider) {
+          $provide.factory('reqInterceptor', function() {
+            return function(promise) {
+              return promise.then(function(config) {
+                config.url = 'http://qa.example.com' + config.url;
+                config.headers = {"TestHeader": "test"};
+                config.data = uppercase(config.data);
+                return config;
+              });
+            };
+          });
+
+          $httpProvider.requestInterceptors.push('reqInterceptor');
+        });
+
+        inject(function($http, $httpBackend) {
+          $httpBackend.expectPUT('http://qa.example.com/test', "GUDAY", {"TestHeader": "test"}).respond("howdy");;
+          $http.put('/test', 'guday');
         });
       });
     });
