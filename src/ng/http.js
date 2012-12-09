@@ -152,13 +152,23 @@ function $HttpProvider() {
     }
   };
 
+  var providerRequestInterceptors = this.requestInterceptors = [];
   var providerResponseInterceptors = this.responseInterceptors = [];
 
   this.$get = ['$httpBackend', '$browser', '$cacheFactory', '$rootScope', '$q', '$injector',
       function($httpBackend, $browser, $cacheFactory, $rootScope, $q, $injector) {
 
     var defaultCache = $cacheFactory('$http'),
+        requestInterceptors = [],
         responseInterceptors = [];
+
+    forEach(providerRequestInterceptors, function(interceptor) {
+      requestInterceptors.push(
+          isString(interceptor)
+              ? $injector.get(interceptor)
+              : $injector.invoke(interceptor)
+      );
+    });
 
     forEach(providerResponseInterceptors, function(interceptor) {
       responseInterceptors.push(
@@ -508,6 +518,7 @@ function $HttpProvider() {
       </example>
      */
     function $http(config) {
+      // TODO(splondike): Consider cloning config here using extend
       config.method = uppercase(config.method);
 
       var reqTransformFn = config.transformRequest || defaults.transformRequest,
@@ -525,13 +536,28 @@ function $HttpProvider() {
         delete reqHeaders['Content-Type'];
       }
 
+      // Keep transformed headers and data in config for easy movement
+      config.data = reqData;
+      config.headers = reqHeaders;
+
       if (isUndefined(config.withCredentials) && !isUndefined(defaults.withCredentials)) {
         config.withCredentials = defaults.withCredentials;
       }
 
-      // send request
-      promise = sendReq(config, reqData, reqHeaders);
+      // transform request
+      var reqDeferred = $q.defer(),
+          reqPromise = reqDeferred.promise;
 
+      forEach(requestInterceptors, function(interceptor) {
+        reqPromise = interceptor(reqPromise);
+      });
+
+      reqDeferred.resolve(config);
+
+      // send request after transformations
+      promise = reqPromise.then(function(config) {
+        return sendReq(config);
+      });
 
       // transform future response
       promise = promise.then(transformResponse, transformResponse);
@@ -701,7 +727,7 @@ function $HttpProvider() {
      * !!! ACCESSES CLOSURE VARS:
      * $httpBackend, defaults, $log, $rootScope, defaultCache, $http.pendingRequests
      */
-    function sendReq(config, reqData, reqHeaders) {
+    function sendReq(config) {
       var deferred = $q.defer(),
           promise = deferred.promise,
           cache,
@@ -739,7 +765,7 @@ function $HttpProvider() {
 
       // if we won't have the response in cache, send the request to the backend
       if (!cachedResp) {
-        $httpBackend(config.method, url, reqData, done, reqHeaders, config.timeout,
+        $httpBackend(config.method, url, config.data, done, config.headers, config.timeout,
             config.withCredentials, config.responseType);
       }
 
